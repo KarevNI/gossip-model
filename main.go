@@ -19,17 +19,49 @@ var (
 	R *rand.Rand
 )
 
-func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, s int, f int, iid int, d bool, p float64) {
+type TestInfo struct {
+	size         int
+	fanout       int
+	numexp       int
+	leader_node  int
+	debug        bool
+	clusters     model.ClusterList
+	default_prob float64
+	scenario     int
+}
+
+func (info *TestInfo) String() string {
+	var str string
+	str += fmt.Sprintf("Size:                 %d\n", info.size)
+	str += fmt.Sprintf("Fanout:               %d\n", info.fanout)
+	str += fmt.Sprintf("NumExp:               %d\n", info.numexp)
+	str += fmt.Sprintf("LeaderNode:           %d\n", info.leader_node)
+	str += fmt.Sprintf("Debug:                %t\n", info.debug)
+	str += fmt.Sprintf("Default probability:  %f\n", info.default_prob)
+	str += fmt.Sprintf("Scenario id:          %d\n", info.scenario)
+
+	if len(info.clusters) > 0 {
+		for id, v := range info.clusters {
+			str += fmt.Sprintf("Cluster-%d:            %f   capacity=%d\n", id+1, v.Prob, v.Capacity)
+		}
+	} else {
+		str += fmt.Sprintf("There are no clusters\n")
+	}
+
+	return str
+}
+
+func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, testInfo TestInfo) {
 	defer func() {
 		wg.Done()
 	}()
 	for range job {
 		// Experimental routine starts here
-		netmap, err := model.SampleNetwork(s, p)
+		netmap, err := model.SampleNetwork(testInfo.size, testInfo.clusters, testInfo.default_prob)
 		if err != nil {
 			panic(err)
 		}
-		err = netmap.VisitNode(iid)
+		err = netmap.VisitNode(testInfo.leader_node)
 		if err != nil {
 			panic(err)
 		}
@@ -41,7 +73,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, s i
 			i++
 			if i > len(netmap.Topology) {
 				// debug only
-				if d {
+				if testInfo.debug {
 					fmt.Println("Found infinite cycle!")
 					for epochNum := 0; epochNum < len(netmap.Topology); epochNum++ {
 						if epoch, ok := netmap.History[epochNum]; ok {
@@ -57,7 +89,26 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, s i
 				break
 			}
 			// Here we calling gossip algorithm
-			stat := netmap.RunEpochNaiveOnce(f, i)
+			var stat model.Stat
+			switch testInfo.scenario {
+			case 0:
+				stat = netmap.RunEpochNaiveOnce(testInfo.fanout, i)
+			case 1:
+				stat = netmap.RunEpochNaiveForever(testInfo.fanout, i)
+			case 2:
+				stat = netmap.RunEpochNaiveForeverMemorise(testInfo.fanout, i)
+			case 3:
+				stat = netmap.RunEpochCentralised(testInfo.fanout, i)
+			case 4:
+				stat = netmap.RunEpochCentralisedMemorise(testInfo.fanout, i)
+			case 5:
+				stat = netmap.RunEpochVectorOnce(testInfo.fanout, i)
+			default:
+				fmt.Println("Unsupported scenario!")
+				os.Exit(1)
+				//0-NaiveOnce, 1-NaiveForever, 2-NaiveForeverMemorise, 3-Centralised, 4-CentralisedMemorise, 5-VectorOnce
+			}
+
 			reused += stat.Reused
 		}
 		if netmap.IsNetworkFilled() {
@@ -67,7 +118,10 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, s i
 	}
 }
 
-func runExperiment(size int, fanout int, numexp int, initid int, debug bool, probability float64) {
+func runExperiment(testInfo TestInfo) {
+
+	fmt.Println(testInfo.String())
+
 	start := time.Now()
 	defer func() {
 		fmt.Println(time.Since(start))
@@ -85,19 +139,18 @@ func runExperiment(size int, fanout int, numexp int, initid int, debug bool, pro
 		InfCounter: 0,
 	}
 
-	jobs := make(chan struct{}, numexp)
+	jobs := make(chan struct{}, testInfo.numexp)
 
-	for j := 0; j < numexp; j++ {
+	for j := 0; j < testInfo.numexp; j++ {
 		jobs <- struct{}{}
 	}
-
 	for j := 0; j < workerCount; j++ {
-		go jobWorker(jobs, &c, wg, size, fanout, initid, debug, probability)
+		go jobWorker(jobs, &c, wg, testInfo)
 	}
 	close(jobs)
 	wg.Wait()
 
-	if debug {
+	if testInfo.debug {
 		dataString := ""
 		for i := 0; i < 20; i++ {
 			if try, ok := c.Counter[i]; ok {
@@ -106,9 +159,9 @@ func runExperiment(size int, fanout int, numexp int, initid int, debug bool, pro
 				dataString += "0;"
 			}
 		}
-		fmt.Printf("%d;%d;%s\n", size, fanout, dataString)
+		fmt.Printf("%d;%d;%s\n", testInfo.size, testInfo.fanout, dataString)
 	} else {
-		fmt.Printf("Size: %d Fan-out: %d\n", size, fanout)
+		fmt.Printf("Size: %d Fan-out: %d\n", testInfo.size, testInfo.fanout)
 		hopNumbers := make([]int, 0, len(c.Counter))
 		for hop := range c.Counter {
 			hopNumbers = append(hopNumbers, hop)
@@ -116,21 +169,24 @@ func runExperiment(size int, fanout int, numexp int, initid int, debug bool, pro
 		sort.Ints(hopNumbers) //sort by key
 		for _, ind := range hopNumbers {
 			fmt.Printf("%d:%d (%.2f%%)  ", ind+1, c.Counter[ind],
-				float32(c.Counter[ind])/float32(numexp)*100)
+				float32(c.Counter[ind])/float32(testInfo.numexp)*100)
 		}
-		fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(numexp)*100)
-		fmt.Printf("Reused avg: %d\n", c.ReCounter/numexp)
+		fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(testInfo.numexp)*100)
+		fmt.Printf("Reused avg: %d\n", c.ReCounter/testInfo.numexp)
 	}
 }
 
 func main() {
-	sampleSize := flag.Int("s", 100, "size of network map")
-	fanoutSize := flag.Int("f", 10, "size of fanout value")
-	initialNode := flag.Int("n", 0, "index of leader node")
-	numExperiments := flag.Int("c", 10, "number of experiments")
-	probability := flag.Float64("p", 0.5, "probability of node connections")
-	debug := flag.Bool("debug", false, "debug mode")
+	var testInfo TestInfo
 	repl := flag.Bool("i", false, "interactive mode")
+	flag.IntVar(&testInfo.size, "s", 100, "size of network map")
+	flag.IntVar(&testInfo.fanout, "f", 10, "size of fanout value")
+	flag.IntVar(&testInfo.leader_node, "n", 0, "index of leader node")
+	flag.IntVar(&testInfo.numexp, "c", 10, "number of experiments")
+	flag.Float64Var(&testInfo.default_prob, "p", 0.5, "default probability of node connections")
+	flag.BoolVar(&testInfo.debug, "debug", false, "debug mode")
+	flag.Var(&testInfo.clusters, "k", "clusters data. e.g.: -k 0.5/100 -k 0.8/20 ...")
+	flag.IntVar(&testInfo.scenario, "e", 0, `Scenario ID (0-NaiveOnce, 1-NaiveForever, 2-NaiveForeverMemorise, 3-Centralised, 4-CentralisedMemorise, 5-VectorOnce`)
 	flag.Parse()
 
 	if *repl {
@@ -141,44 +197,80 @@ func main() {
 			Name: "run",
 			Help: "run gossip experiment",
 			Func: func(c *ishell.Context) {
+				var testInfo TestInfo
+				var err error = nil
+
 				// disable the '>>>' for cleaner same line input.
 				c.ShowPrompt(false)
 				defer c.ShowPrompt(true) // yes, revert after login.
 
 				c.Print("Network size: ")
-				netsize, err := strconv.Atoi(c.ReadLine())
-				if err != nil || netsize <= 0 {
+				testInfo.size, err = strconv.Atoi(c.ReadLine())
+				if err != nil || testInfo.size <= 0 {
 					c.Println("Incorrect network size")
 					return
 				}
 
 				c.Print("Fan-out size: ")
-				fanout, err := strconv.Atoi(c.ReadLine())
-				if err != nil || fanout <= 0 || fanout > netsize-1 {
+				testInfo.fanout, err = strconv.Atoi(c.ReadLine())
+				if err != nil || testInfo.fanout <= 0 || testInfo.fanout > testInfo.size-1 {
 					c.Println("Incorrect fan-out size")
 					return
 				}
 
 				c.Print("Number of experiments: ")
-				expnum, err := strconv.Atoi(c.ReadLine())
-				if err != nil || netsize <= 0 {
+				testInfo.numexp, err = strconv.Atoi(c.ReadLine())
+				if err != nil || testInfo.size <= 0 {
 					c.Println("Incorrect number of experiments")
 					return
 				}
 
-				c.Print("Probability of node connections: ")
-				prob, err := strconv.ParseFloat(c.ReadLine(), 64)
-				if err != nil || prob < 0 || prob > 1 {
+				c.Print("Default probability of node connections: ")
+				testInfo.default_prob, err = strconv.ParseFloat(c.ReadLine(), 64)
+				if err != nil || testInfo.default_prob < 0 || testInfo.default_prob > 1 {
 					c.Println("Incorrect probability")
 					return
 				}
 
+				c.Print("Number of clusters: ")
+				clusters_num, err := strconv.ParseUint(c.ReadLine(), 10, 64)
+				if err != nil {
+					c.Println(err)
+					return
+				}
+
+				var i uint64
+				for i = 0; i < clusters_num; i++ {
+					c.Printf("Settings for Cluster-%d:\n", i+1)
+					c.Printf("\tProbability: ")
+					var prob float64
+					var capacity uint64
+
+					prob, err = strconv.ParseFloat(c.ReadLine(), 64)
+					if err != nil || prob < 0 || prob > 1 {
+						c.Println("Incorrect probability")
+						return
+					}
+
+					c.Printf("\tCapacity: ")
+					capacity, err = strconv.ParseUint(c.ReadLine(), 10, 64)
+					if err != nil {
+						c.Println("Incorrect probability")
+						return
+					}
+
+					testInfo.clusters = append(testInfo.clusters, &model.Cluster{Prob: prob, Capacity: capacity})
+				}
+
+				testInfo.leader_node = 0
+				testInfo.debug = false
+
 				c.Println("-----------")
-				runExperiment(netsize, fanout, expnum, 0, false, prob)
+				runExperiment(testInfo)
 			},
 		})
 		shell.Run()
 	} else {
-		runExperiment(*sampleSize, *fanoutSize, *numExperiments, *initialNode, *debug, *probability)
+		runExperiment(testInfo)
 	}
 }
