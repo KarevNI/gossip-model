@@ -68,6 +68,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 
 		i := -1
 		reused := 0
+		coverage := 0
 
 		for !netmap.IsNetworkFilled() {
 			i++
@@ -110,10 +111,12 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 			}
 
 			reused += stat.Reused
+			coverage += stat.Coverage
 		}
 		if netmap.IsNetworkFilled() {
 			c.Inc(i)
 			c.AddRe(reused)
+			c.AddCoverage(coverage)
 		}
 	}
 }
@@ -137,6 +140,7 @@ func runExperiment(testInfo TestInfo) {
 		Counter:    make(map[int]int),
 		ReCounter:  0,
 		InfCounter: 0,
+		Coverage:   0,
 	}
 
 	jobs := make(chan struct{}, testInfo.numexp)
@@ -173,6 +177,7 @@ func runExperiment(testInfo TestInfo) {
 		}
 		fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(testInfo.numexp)*100)
 		fmt.Printf("Reused avg: %d\n", c.ReCounter/testInfo.numexp)
+		fmt.Printf("Coverage avg: %d\n", c.Coverage/testInfo.numexp)
 	}
 }
 

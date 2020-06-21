@@ -14,6 +14,7 @@ type (
 		Counter    map[int]int
 		ReCounter  int
 		InfCounter int
+		Coverage   int
 	}
 )
 
@@ -33,6 +34,11 @@ func (c *EpochCounter) AddRe(re int) {
 	c.ReCounter += re
 }
 
+func (c *EpochCounter) AddCoverage(cov int) {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+	c.Coverage += cov
+}
 func (c *EpochCounter) IncInfiniteCounter() {
 	c.Mu.Lock()
 	defer c.Mu.Unlock()
