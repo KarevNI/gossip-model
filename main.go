@@ -116,7 +116,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 		if netmap.IsNetworkFilled() {
 			c.Inc(i)
 			c.AddRe(reused)
-			c.AddCoverage(coverage)
+			c.AddCoverage(coverage / (i + 1))
 		}
 	}
 }
@@ -188,7 +188,7 @@ func main() {
 	flag.IntVar(&testInfo.fanout, "f", 10, "size of fanout value")
 	flag.IntVar(&testInfo.leader_node, "n", 0, "index of leader node")
 	flag.IntVar(&testInfo.numexp, "c", 10, "number of experiments")
-	flag.Float64Var(&testInfo.default_prob, "p", 0.5, "default probability of node connections")
+	flag.Float64Var(&testInfo.default_prob, "p", 1, "default probability of node connections")
 	flag.BoolVar(&testInfo.debug, "debug", false, "debug mode")
 	flag.Var(&testInfo.clusters, "k", "clusters data. e.g.: -k 0.5/100 -k 0.8/20 ...")
 	flag.IntVar(&testInfo.scenario, "e", 0, `Scenario ID (0-NaiveOnce, 1-NaiveForever, 2-NaiveForeverMemorise, 3-Centralised, 4-CentralisedMemorise, 5-VectorOnce`)
