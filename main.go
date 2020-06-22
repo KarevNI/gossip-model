@@ -139,11 +139,15 @@ func runExperiment(testInfo TestInfo) {
 		InfCounter: 0,
 	}
 
+	// Prepare experiments queue.
 	jobs := make(chan struct{}, testInfo.numexp)
 
+	//Put empty structures to the queue to fill then during experiment run
 	for j := 0; j < testInfo.numexp; j++ {
 		jobs <- struct{}{}
 	}
+
+	// Start processing experiments and save results
 	for j := 0; j < workerCount; j++ {
 		go jobWorker(jobs, &c, wg, testInfo)
 	}
@@ -160,20 +164,21 @@ func runExperiment(testInfo TestInfo) {
 			}
 		}
 		fmt.Printf("%d;%d;%s\n", testInfo.size, testInfo.fanout, dataString)
-	} else {
-		fmt.Printf("Size: %d Fan-out: %d\n", testInfo.size, testInfo.fanout)
-		hopNumbers := make([]int, 0, len(c.Counter))
-		for hop := range c.Counter {
-			hopNumbers = append(hopNumbers, hop)
-		}
-		sort.Ints(hopNumbers) //sort by key
-		for _, ind := range hopNumbers {
-			fmt.Printf("%d:%d (%.2f%%)  ", ind+1, c.Counter[ind],
-				float32(c.Counter[ind])/float32(testInfo.numexp)*100)
-		}
-		fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(testInfo.numexp)*100)
-		fmt.Printf("Reused avg: %d\n", c.ReCounter/testInfo.numexp)
 	}
+
+	fmt.Printf("Size: %d Fan-out: %d\n", testInfo.size, testInfo.fanout)
+	hopNumbers := make([]int, 0, len(c.Counter))
+	for hop := range c.Counter {
+		hopNumbers = append(hopNumbers, hop)
+	}
+	sort.Ints(hopNumbers) //sort by key
+	for _, ind := range hopNumbers {
+		fmt.Printf("%d:%d (%.2f%%)  ", ind+1, c.Counter[ind],
+			float32(c.Counter[ind])/float32(testInfo.numexp)*100)
+	}
+	fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(testInfo.numexp)*100)
+	fmt.Printf("Reused avg: %d\n", c.ReCounter/testInfo.numexp)
+
 }
 
 func main() {
