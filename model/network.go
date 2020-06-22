@@ -22,7 +22,7 @@ type (
 	Network struct {
 		Topology   map[int]*Node         // defines map of available nodes
 		LinkMatrix map[int]map[int]bool  // Connectivity Matrix
-		History    map[int]map[int][]int // history of all propagation changes
+		History    map[int]map[int][]int // history of all propagation changes [Epoch][Node]
 		generated  map[int]map[int]bool  // extra structure for history based algorithms.
 	}
 )

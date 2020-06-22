@@ -57,6 +57,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 	}()
 	for range job {
 		// Experimental routine starts here
+		// First, generate network map. It should be different for each experiment
 		netmap, err := model.SampleNetwork(testInfo.size, testInfo.clusters, testInfo.default_prob)
 		if err != nil {
 			panic(err)
@@ -88,7 +89,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 				c.InfCounter++
 				break
 			}
-			// Here we calling gossip algorithm
+			// Here we are calling gossip algorithm
 			var stat model.Stat
 			switch testInfo.scenario {
 			case 0:
@@ -110,6 +111,7 @@ func jobWorker(job chan struct{}, c *model.EpochCounter, wg *sync.WaitGroup, tes
 			}
 
 			reused += stat.Reused
+			c.AddSat(i, netmap.CountCoverage())
 		}
 		if netmap.IsNetworkFilled() {
 			c.Inc(i)
@@ -132,9 +134,12 @@ func runExperiment(testInfo TestInfo) {
 	wg := new(sync.WaitGroup)
 	wg.Add(workerCount)
 
+	// Experiment result structure is used by all workers,
+	// hence there is need for a Mutex
 	c := model.EpochCounter{
 		Mu:         new(sync.Mutex),
 		Counter:    make(map[int]int),
+		SatSum:     make(map[int]int),
 		ReCounter:  0,
 		InfCounter: 0,
 	}
@@ -142,12 +147,13 @@ func runExperiment(testInfo TestInfo) {
 	// Prepare experiments queue.
 	jobs := make(chan struct{}, testInfo.numexp)
 
-	//Put empty structures to the queue to fill then during experiment run
+	//Put empty structures to the queue to fill them during experiment run
 	for j := 0; j < testInfo.numexp; j++ {
 		jobs <- struct{}{}
 	}
 
-	// Start processing experiments and save results
+	// Start processing experiments
+	// Each worker takes one experiment at a time
 	for j := 0; j < workerCount; j++ {
 		go jobWorker(jobs, &c, wg, testInfo)
 	}
@@ -178,6 +184,16 @@ func runExperiment(testInfo TestInfo) {
 	}
 	fmt.Printf("inf:%d (%.2f%%)\n", c.InfCounter, float32(c.InfCounter)/float32(testInfo.numexp)*100)
 	fmt.Printf("Reused avg: %d\n", c.ReCounter/testInfo.numexp)
+
+	fmt.Println("Average saturation stats:")
+	satEps := make([]int, 0, len(c.SatSum))
+	for epoch := range c.SatSum {
+		satEps = append(satEps, epoch)
+	}
+	sort.Ints(satEps) //sort by key
+	for _, ind := range satEps {
+		fmt.Printf("%d,%d\n", ind, (c.SatSum[ind]/testInfo.numexp))
+	}
 
 }
 

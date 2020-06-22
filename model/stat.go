@@ -12,6 +12,7 @@ type (
 	EpochCounter struct {
 		Mu         *sync.Mutex
 		Counter    map[int]int
+		SatSum     map[int]int // Average saturation per Epoch
 		ReCounter  int
 		InfCounter int
 	}
@@ -31,6 +32,12 @@ func (c *EpochCounter) AddRe(re int) {
 	c.Mu.Lock()
 	defer c.Mu.Unlock()
 	c.ReCounter += re
+}
+
+func (c *EpochCounter) AddSat(epoch int, coverage int) {
+	c.Mu.Lock()
+	defer c.Mu.Unlock()
+	c.SatSum[epoch] += coverage
 }
 
 func (c *EpochCounter) IncInfiniteCounter() {
